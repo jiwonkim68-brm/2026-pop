@@ -14,7 +14,7 @@ st.set_page_config(
     layout="wide",
 )
 
-# app.py와 같은 폴더에 아래 파일명 그대로 CSV를 올려주세요.
+# main.py와 같은 폴더에 아래 파일명 그대로 CSV를 올려주세요.
 DATA_FILE = "202606_202606_연령별인구현황_월간.csv"
 
 
