@@ -1,68 +1,52 @@
-import re
-import requests
-import pandas as pd
-import streamlit as st
-import plotly.express as px
+[분석 목표]
+행정안전부 주민등록 연령별 인구현황(202606_202606_연령별인구현황_월간.csv)과
+2024년 국가암검진사업 통계연보(2024_제2편_암검진.xlsx)를 결합해서,
+"지역별/연령별 인구 대비 암검진 이상소견(암의심·암) 발견 비율"을 분석해줘.
 
-st.set_page_config(page_title="전국 고령화 단계구분도", layout="wide")
-st.title("전국 고령화 단계구분도 (2026년, 시군구별 65세 이상 비율)")
+※ 용어 정정: 이 데이터는 국가암등록통계(실제 암 발생자 수)가 아니라
+'건강검진 수검자 중 이상소견 발견 비율'이야. "발생률"이 아니라
+"검진 발견율" 또는 "이상소견율"이라는 표현을 결과물 전체에서 일관되게 써줘.
 
-POP_URL = "https://raw.githubusercontent.com/greatsong/modudata/main/data/population_yearly.csv.gz"
-GEO_URL = "https://raw.githubusercontent.com/greatsong/modudata/main/data/boundaries/sigungu_kr.geojson"
+[사용할 데이터]
+1. 인구 데이터: 202606_202606_연령별인구현황_월간.csv
+   - 시/도 합계 행("서울특별시  (1100000000)" 형태)만 추려서 17개 광역시도 인구로 사용
+   - 필요하면 연령대별 인구(0~100세)도 함께 활용
 
-@st.cache_data
-def load_population():
-    # '코드' 열은 앞자리 0이 사라지지 않게 문자열로 읽어요
-    return pd.read_csv(POP_URL, dtype={"코드": str})
+2. 암검진 데이터: 2024_제2편_암검진.xlsx 중 아래 시트만 사용
+   - 시/도별: (2-4) 위암 / (2-8) 대장암 / (2-12)+(2-13) 간암(상+하반기 합산)
+             / (2-16) 유방암 / (2-18) 자궁경부암 / (2-20) 폐암
+   - 연령별: (2-5) 위암 / (2-9) 대장암 / (2-14)+(2-15) 간암 / (2-17) 유방암
+             / (2-19) 자궁경부암 / (2-21) 폐암
+   - 각 시트에서 '암의심' + '암' 두 열의 합을 "이상소견 발견 건수"로 정의
+   - '기존 암환자' 열은 제외(이미 각주에서 계산 시 제외된 값이라 중복 아님)
 
-@st.cache_data
-def load_geojson():
-    return requests.get(GEO_URL).json()
+[전처리 시 주의할 점]
+- 암검진 엑셀은 표 하나가 좌우로 2단 배치되어 있어(예: A~I열이 첫 지역군,
+  J열부터 다음 지역군). 이 구조를 감안해서 파싱해줘.
+- 지역명 표기를 통일해줘 (인구데이터는 "서울특별시", 암검진데이터는 "서울" 식으로 다름)
+- 시/도별 표는 '계/남자/여자' 3개 행이 한 세트니, 필요한 성별만 골라 써줘.
+- 암검진 대상 연령 기준은 암종마다 달라(예: 위암 40세~, 자궁경부암 20세~,
+  폐암은 고위험군만) — 인구 데이터 연령 구간을 검진 대상 연령에 맞게 자를 것.
 
-df = load_population()
-geojson = load_geojson()
+[계산할 지표]
+1. 지역별 지표 (시/도 17개 × 암종 6개)
+   - 수검률 = 수검인원 / 대상인원 × 100
+   - 이상소견 발견율(수검자 기준) = (암의심+암) / 수검인원 × 100,000
+   - 인구 대비 발견율(참고용 근사치) = (암의심+암) / 해당 시도 인구 × 100,000
+     ※ 이 지표는 '전체 인구 대비'가 아니라 '수검한 사람 비율의 영향을 받는 근사치'
+       라는 점을 결과에 명시할 것 (수검률이 낮은 지역은 과소추정될 수 있음)
 
-# 1. 2026년 데이터만 사용
-df = df[df["연도"] == 2026].copy()
+2. 연령별 지표 (암종 6개 × 연령 구간)
+   - 위와 동일한 방식으로 연령대별 발견율 계산
+   - 연령이 올라갈수록 발견율이 어떻게 변하는지 추세 확인
 
-# 2. '계_'로 시작하는 나이 열만 (남_·여_ 열은 제외)
-total_cols = [c for c in df.columns if c.startswith("계_")]
+[원하는 산출물]
+- 시/도별 암종별 '이상소견 발견율' 비교 표 + 막대그래프(Plotly)
+- 연령대별 발견율 추이 꺾은선 그래프(암종별로 색상 구분)
+- (선택) 지역 인구의 고령화율과 암 발견율 사이에 상관관계가 있는지 산점도 +
+  상관계수(피어슨) 계산
+- 모든 그래프/표에 "이 수치는 검진 수검자 기준이며 실제 암 발생률과는 다릅니다"
+  라는 안내 문구를 눈에 띄게 넣어줘
 
-# 3. 그중 65세 이상 열만 골라내기 ('계_65세' ~ '계_100세 이상')
-def age_of(col):
-    m = re.match(r"계_(\d+)세", col)
-    return int(m.group(1)) if m else None
-
-elderly_cols = [c for c in total_cols if age_of(c) is not None and age_of(c) >= 65]
-
-# 4. 동 단위 전체 인구·고령 인구 계산
-df["전체인구"] = df[total_cols].sum(axis=1)
-df["고령인구"] = df[elderly_cols].sum(axis=1)
-
-# 5. '코드' 앞 5자리 = 시군구 코드 → 시군구별로 묶어 비율 계산
-df["시군구코드"] = df["코드"].str[:5]
-grouped = df.groupby("시군구코드")[["전체인구", "고령인구"]].sum().reset_index()
-grouped["고령화율"] = (grouped["고령인구"] / grouped["전체인구"] * 100).round(2)
-
-# 경계 파일에서 코드 → 시군구 이름 짝 만들기 (마우스 올렸을 때 표시용)
-names = pd.DataFrame([
-    {"시군구코드": str(f["properties"]["코드"]), "시군구": f["properties"]["시군구"]}
-    for f in geojson["features"]
-])
-merged = grouped.merge(names, on="시군구코드", how="left")
-
-# 6. 단계구분도 그리기 (배경 타일 없이 경계만)
-fig = px.choropleth(
-    merged,
-    geojson=geojson,
-    locations="시군구코드",
-    featureidkey="properties.코드",
-    color="고령화율",
-    color_continuous_scale="Reds",
-    hover_name="시군구",
-    labels={"고령화율": "65세 이상 비율(%)"},
-)
-fig.update_geos(fitbounds="locations", visible=False)
-fig.update_layout(margin=dict(l=0, r=0, t=30, b=0), height=700)
-
-st.plotly_chart(fig, use_container_width=True)
+[최종 형태]
+- (Streamlit 대시보드)
