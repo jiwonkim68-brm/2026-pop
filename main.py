@@ -1,161 +1,198 @@
 import pandas as pd
-import plotly.express as px
+import plotly.graph_objects as go
 import streamlit as st
 
 # =========================================================
 # 화면 기본 설정
 # =========================================================
-# page_title : 브라우저 탭에 뜨는 제목
-# page_icon  : 브라우저 탭 아이콘(이모지도 가능해요)
-# layout     : "wide"로 하면 화면을 꽉 채워서 넓게 보여줘요
 st.set_page_config(
-    page_title="우리나라 인구, 얼마나 퍼져있을까?",
-    page_icon="🌱",
+    page_title="동네별 인구 피라미드",
+    page_icon="🔺",
     layout="wide",
 )
 
-# 데이터가 있는 주소예요. 확장자가 .gz(압축파일)여도
-# pandas가 알아서 압축을 풀어서 읽어줘요. 우리가 따로 할 일은 없어요!
+# 데이터 주소예요. 확장자가 .gz(압축파일)여도 pandas가 알아서
+# 압축을 풀어서 읽어줘요. 우리가 따로 압축을 풀 필요는 없어요!
 DATA_URL = "https://raw.githubusercontent.com/greatsong/modudata/main/data/population_yearly.csv.gz"
 
 
 # =========================================================
 # 데이터 불러오기
 # =========================================================
-# @st.cache_data 를 붙여두면, 한 번 불러온 데이터는 저장해뒀다가
-# 재사용해요. 그래서 앱이 새로고침될 때마다 매번 인터넷에서
-# 다시 받아오지 않아도 되어서 훨씬 빨라져요.
+# @st.cache_data를 붙여두면, 한 번 불러온 데이터를 저장해뒀다가
+# 재사용해요. 그래서 버튼을 눌러 화면이 다시 그려져도 매번
+# 인터넷에서 다시 받아오지 않아 훨씬 빨라져요.
 @st.cache_data
 def load_data():
-    # 주소 끝이 .gz라서 pandas가 압축 파일인 걸 자동으로 알아채고
-    # 알아서 압축을 풀면서 읽어줘요. 우리는 그냥 평범한 CSV처럼
-    # read_csv 한 줄만 쓰면 됩니다.
     df = pd.read_csv(DATA_URL, compression="gzip")
     return df
 
 
-# 화면에 "불러오는 중이에요" 같은 안내를 보여주면서 데이터를 불러와요.
 with st.spinner("인구 데이터를 불러오고 있어요... 잠시만 기다려주세요 🙂"):
     df = load_data()
 
-st.title("🌱 우리 동네 인구, 얼마나 퍼져있을까?")
+st.title("🔺 동네별 인구 피라미드")
 st.write(
-    "전국 읍·면·동 단위로, 동네마다 사람이 얼마나 살고 있는지를 모아서 "
-    "'퍼짐(분포)'을 살펴보는 아주 간단한 앱이에요."
+    "시도 → 시군구 → 동을 차례로 골라서, 그 동네의 남녀·연령별 인구 구조를 "
+    "피라미드 모양으로 살펴보는 앱이에요."
 )
 
 # =========================================================
 # 1단계. 가장 최신 연도만 남기기
 # =========================================================
-# '연도' 열에서 가장 큰 값(=가장 최근 연도)만 골라내요.
 latest_year = df["연도"].max()
 df_latest = df[df["연도"] == latest_year].copy()
 
-st.info(f"📅 가장 최신 연도인 **{latest_year}년** 데이터만 사용할게요. "
-        f"(전체 {len(df_latest):,}개 동네)")
-
-# =========================================================
-# 2단계. '총인구' 열 새로 만들기
-# =========================================================
-# 이 데이터는 '남_0세', '여_0세', '남_1세', '여_1세' ... 처럼
-# 나이 하나마다 남자/여자 인구가 각각 열로 나뉘어 있어요.
-# 그래서 이름이 '남_'이나 '여_'로 시작하는 열을 전부 찾아서
-# 한 동네(한 행)마다 옆으로 다 더하면, 그 동네의 총인구가 나와요.
-gender_age_cols = [
-    col for col in df_latest.columns
-    if col.startswith("남_") or col.startswith("여_")
-]
-
-# 혹시 숫자가 아닌 값(빈 칸 등)이 섞여 있을 수도 있으니,
-# 안전하게 숫자로 한 번 변환해줘요. 변환이 안 되는 값은 0으로 처리해요.
-df_latest[gender_age_cols] = df_latest[gender_age_cols].apply(
-    pd.to_numeric, errors="coerce"
-).fillna(0)
-
-# axis=1은 "옆으로(가로로) 더하기"라는 뜻이에요.
-# (axis=0은 위아래로 더하기)
-df_latest["총인구"] = df_latest[gender_age_cols].sum(axis=1)
+st.info(f"📅 가장 최신 연도인 **{latest_year}년** 데이터를 사용할게요.")
 
 st.divider()
 
 # =========================================================
-# 화면에 보여줄 1) describe() 결과 표
+# 2단계. 시도 → 시군구 → 동, 드롭다운 3개로 동네 고르기
 # =========================================================
-st.header("1️⃣ 총인구, 숫자로 요약해서 보기")
-st.write(
-    "describe()는 데이터를 한눈에 요약해주는 함수예요. "
-    "평균이 얼마인지, 가장 작은 동네와 가장 큰 동네는 인구가 몇 명인지, "
-    "전체적으로 어떻게 퍼져있는지를 숫자로 보여줘요."
-)
+st.subheader("📍 우리 동네를 골라주세요")
 
-# describe()의 결과(Series)를 보기 좋은 표 형태로 바꿔줘요.
-describe_table = df_latest["총인구"].describe().to_frame(name="총인구")
-# 한국어로 이름을 바꿔서 더 이해하기 쉽게 만들어요.
-describe_table.index = [
-    "동네 개수 (count)",
-    "평균 (mean)",
-    "표준편차 (std)",
-    "최솟값 (min)",
-    "25% 지점",
-    "50% 지점 (중앙값)",
-    "75% 지점",
-    "최댓값 (max)",
-]
-# 소수점은 보기 편하게 반올림해요.
-st.dataframe(
-    describe_table.style.format("{:,.1f}"),
-    use_container_width=True,
-)
+col1, col2, col3 = st.columns(3)
+
+# --- 시도 고르기 ---
+with col1:
+    sido_list = sorted(df_latest["시도"].dropna().unique())
+    selected_sido = st.selectbox("시/도", sido_list)
+
+# 선택한 시도에 맞춰서 시군구 목록을 좁혀요.
+df_sido = df_latest[df_latest["시도"] == selected_sido]
+
+# --- 시군구 고르기 ---
+with col2:
+    sigungu_list = sorted(df_sido["시군구"].dropna().unique())
+    selected_sigungu = st.selectbox("시/군/구", sigungu_list)
+
+# 선택한 시군구에 맞춰서 동 목록을 좁혀요.
+df_sigungu = df_sido[df_sido["시군구"] == selected_sigungu]
+
+# --- 동 고르기 ---
+with col3:
+    dong_list = sorted(df_sigungu["동"].dropna().unique())
+    selected_dong = st.selectbox("읍/면/동", dong_list)
+
+# 최종적으로 고른 동 하나에 해당하는 행(row)을 뽑아요.
+df_dong = df_sigungu[df_sigungu["동"] == selected_dong]
+
+if df_dong.empty:
+    st.warning("해당 조건의 데이터를 찾을 수 없어요. 다른 지역을 선택해보세요.")
+    st.stop()
+
+# 혹시 같은 이름의 동이 여러 개 있을 경우를 대비해서, 첫 번째 행만 사용해요.
+selected_row = df_dong.iloc[0]
+
+st.success(f"✅ 선택한 동네: **{selected_sido} {selected_sigungu} {selected_dong}** ({latest_year}년)")
 
 st.divider()
 
 # =========================================================
-# 화면에 보여줄 2) 총인구 히스토그램
+# 3단계. 나이별 남/여 인구 뽑아오기
 # =========================================================
-st.header("2️⃣ 히스토그램으로 퍼짐 살펴보기")
+# 나이 라벨을 0세부터 99세까지, 그리고 마지막에 '100세 이상'까지
+# 순서대로 만들어요. 이 순서가 나중에 그래프의 세로축 순서를 정하는
+# 아주 중요한 기준이 돼요.
+age_labels = [f"{age}세" for age in range(100)] + ["100세 이상"]
+
+# 위에서 만든 나이 라벨 앞에 '남_', '여_'를 붙여서 실제 열 이름을 만들어요.
+male_cols = [f"남_{age}" for age in age_labels]
+female_cols = [f"여_{age}" for age in age_labels]
+
+# 혹시 데이터에 없는 열이 있는지 미리 확인해서, 있으면 알려줘요.
+missing_cols = [c for c in male_cols + female_cols if c not in df_latest.columns]
+if missing_cols:
+    st.error(
+        "데이터에서 다음 열을 찾을 수 없어요. 열 이름을 다시 확인해주세요:\n"
+        + ", ".join(missing_cols[:10])
+        + (" ..." if len(missing_cols) > 10 else "")
+    )
+    st.stop()
+
+# 선택한 동네의 남자 인구, 여자 인구를 나이 순서대로 뽑아요.
+# pd.to_numeric으로 혹시 모를 이상한 값을 숫자로 안전하게 바꿔줘요.
+male_pop = pd.to_numeric(selected_row[male_cols], errors="coerce").fillna(0).values
+female_pop = pd.to_numeric(selected_row[female_cols], errors="coerce").fillna(0).values
+
+# =========================================================
+# 4단계. 인구 피라미드 그리기 (Plotly)
+# =========================================================
+st.subheader(f"'{selected_dong}'의 인구 피라미드")
 st.write(
-    "히스토그램은 인구수를 여러 구간으로 나눈 뒤, "
-    "각 구간에 동네가 몇 개나 있는지 막대로 세어서 보여줘요. "
-    "막대가 왼쪽(적은 인구)에 몰려있다면, 대부분 작은 동네가 많다는 뜻이에요. "
-    "마우스로 드래그하면 확대할 수 있고, 더블클릭하면 원래대로 돌아와요."
+    "왼쪽 파란 막대는 **남자**, 오른쪽 분홍 막대는 **여자** 인구예요. "
+    "남자 쪽은 그래프를 왼쪽으로 그리기 위해 값에 마이너스(-)를 붙였을 뿐, "
+    "실제로는 모두 양수(플러스) 인구수예요. 마우스를 막대에 올리면 정확한 인구수가 보여요."
 )
 
-fig_hist = px.histogram(
-    df_latest,
-    x="총인구",
-    nbins=60,  # 막대(구간)를 몇 개로 나눌지 정해요. 숫자를 바꿔보며 실험해도 좋아요.
-    labels={"총인구": "동네별 총인구 (명)"},
-    title=f"{latest_year}년 읍·면·동 총인구 히스토그램",
-)
-fig_hist.update_layout(
-    yaxis_title="동네 개수",
-    bargap=0.05,  # 막대 사이 살짝 간격을 줘서 더 보기 편하게 해요.
-)
-# use_container_width=True로 하면 화면 너비에 맞춰 그래프가 늘어나요.
-st.plotly_chart(fig_hist, use_container_width=True)
+fig = go.Figure()
 
-st.divider()
-
-# =========================================================
-# 화면에 보여줄 3) 총인구 상자그림(박스플롯)
-# =========================================================
-st.header("3️⃣ 상자그림(박스플롯)으로 퍼짐 살펴보기")
-st.write(
-    "상자그림은 데이터를 작은 값부터 큰 값까지 줄 세운 뒤, "
-    "가운데 절반이 모여있는 구간을 상자로, 유난히 튀는 값(이상치)을 "
-    "점으로 따로 보여줘요. 상자가 좁을수록 동네들의 인구가 서로 "
-    "비슷하다는 뜻이고, 점이 많을수록 유난히 인구가 많거나 적은 "
-    "동네가 많다는 뜻이에요."
+# --- 남자 막대 (왼쪽) ---
+# x값에 마이너스를 붙여서 왼쪽으로 그려지게 해요.
+# customdata에는 원래(양수) 인구수를 넣어두고, hovertemplate에서 그 값을 보여줘요.
+fig.add_trace(
+    go.Bar(
+        y=age_labels,
+        x=-male_pop,
+        orientation="h",
+        name="남자",
+        marker=dict(color="#4C72B0"),
+        customdata=male_pop,
+        hovertemplate="나이: %{y}<br>남자 인구: %{customdata:,.0f}명<extra></extra>",
+    )
 )
 
-fig_box = px.box(
-    df_latest,
-    y="총인구",
-    points="outliers",  # 이상치(튀는 값)만 점으로 표시해요.
-    labels={"총인구": "동네별 총인구 (명)"},
-    title=f"{latest_year}년 읍·면·동 총인구 상자그림",
+# --- 여자 막대 (오른쪽) ---
+fig.add_trace(
+    go.Bar(
+        y=age_labels,
+        x=female_pop,
+        orientation="h",
+        name="여자",
+        marker=dict(color="#DD8452"),
+        customdata=female_pop,
+        hovertemplate="나이: %{y}<br>여자 인구: %{customdata:,.0f}명<extra></extra>",
+    )
 )
-st.plotly_chart(fig_box, use_container_width=True)
+
+fig.update_layout(
+    title=f"{selected_sido} {selected_sigungu} {selected_dong} ({latest_year}년) 인구 피라미드",
+    xaxis_title="인구 수 (명) · 왼쪽=남자, 오른쪽=여자",
+    yaxis_title="나이",
+    barmode="overlay",
+    bargap=0.05,
+    template="plotly_white",
+    height=900,
+    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+)
+
+# -----------------------------------------------------------------
+# ⭐ 세로축(나이) 순서를 직접 고정하는 부분이에요. 아주 중요해요!
+#
+# 나이 라벨이 '0세', '1세', ..., '10세', '100세 이상' 같은 '글자(문자열)'
+# 이기 때문에, 아무 설정도 안 하면 Plotly가 사전 순서(가나다순 비슷하게)로
+# 정렬해버려서 '10세'가 '2세'보다 앞에 오는 등 순서가 뒤죽박죽될 수 있어요.
+#
+# 그래서 categoryorder를 "array"로 지정하고, categoryarray에 우리가
+# 원하는 순서(0세 -> 1세 -> ... -> 100세 이상)를 직접 넣어줘요.
+# 이렇게 하면 이 배열의 '첫 번째 항목이 축의 맨 아래'에 오고,
+# '마지막 항목이 축의 맨 위'에 오게 돼요.
+#
+# 즉, age_labels를 0세부터 100세 이상까지 오름차순으로 그대로 넣으면
+# -> 맨 아래 눈금 = 0세, 맨 위 눈금 = 100세 이상 이 됩니다. (원하는 결과!)
+# -----------------------------------------------------------------
+fig.update_yaxes(
+    categoryorder="array",
+    categoryarray=age_labels,
+)
+
+st.plotly_chart(fig, use_container_width=True)
+
+st.caption(
+    "💡 그래프를 다 그린 뒤에는 항상 세로축을 눈으로 확인해보는 습관을 들이면 좋아요. "
+    "맨 아래 눈금이 '0세', 맨 위 눈금이 '100세 이상'으로 보이면 정상이에요."
+)
 
 st.divider()
 st.caption(
