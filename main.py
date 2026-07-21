@@ -116,6 +116,53 @@ if missing_cols:
 male_pop = pd.to_numeric(selected_row[male_cols], errors="coerce").fillna(0).values
 female_pop = pd.to_numeric(selected_row[female_cols], errors="coerce").fillna(0).values
 
+# 남자 + 여자를 나이별로 더해서, '나이별 전체 인구'도 만들어둬요.
+# (지표 카드와 아래 한 줄 설명에서 사용할 거예요.)
+total_by_age = male_pop + female_pop
+total_pop = float(total_by_age.sum())
+
+# =========================================================
+# 3-1단계. 지표 카드에 쓸 값들 계산하기
+# =========================================================
+# --- 평균연령 계산하기 ---
+# 나이 라벨이 '0세', '1세', ... 처럼 글자이기 때문에, 계산에 쓸 수 있게
+# 숫자 나이 목록을 따로 만들어요. '100세 이상'은 정확한 나이를 알 수 없으니
+# 105세 정도로 근사해서 계산해요(평균연령 계산에서 흔히 쓰는 방법이에요).
+numeric_ages = list(range(100)) + [105]
+
+if total_pop > 0:
+    avg_age = float((total_by_age * numeric_ages).sum() / total_pop)
+else:
+    avg_age = 0.0
+
+# --- 고령화율 계산하기 (65세 이상 인구 비율) ---
+# age_labels는 0세부터 순서대로이므로, 인덱스 65번째부터가 '65세'예요.
+# (age_labels[65] == '65세', 그 뒤로 100세 이상까지 전부 65세 이상 인구)
+elderly_pop = float(total_by_age[65:].sum())
+aging_rate = (elderly_pop / total_pop * 100) if total_pop > 0 else 0.0
+
+# --- 유소년 비율도 계산해두기 (0~14세) ---
+# 뒤에서 '아이가 많은 동네인지, 어르신이 많은 동네인지' 설명할 때 써요.
+young_pop = float(total_by_age[0:15].sum())
+young_rate = (young_pop / total_pop * 100) if total_pop > 0 else 0.0
+
+# =========================================================
+# 3-2단계. 지표 카드 3개 나란히 보여주기
+# =========================================================
+st.subheader("📊 한눈에 보는 동네 지표")
+
+card1, card2, card3 = st.columns(3)
+
+card1.metric("총인구", f"{total_pop:,.0f} 명")
+card2.metric("평균연령", f"{avg_age:.1f} 세")
+card3.metric("고령화율 (65세 이상 비율)", f"{aging_rate:.1f} %")
+
+# 고령화율이 20%를 넘으면(통계청 기준 '초고령사회' 기준선) 주의 표시를 붙여줘요.
+if aging_rate >= 20:
+    card3.markdown("⚠️ **초고령사회 기준(20%) 초과**")
+
+st.divider()
+
 # =========================================================
 # 4단계. 인구 피라미드 그리기 (Plotly)
 # =========================================================
@@ -192,6 +239,25 @@ st.plotly_chart(fig, use_container_width=True)
 st.caption(
     "💡 그래프를 다 그린 뒤에는 항상 세로축을 눈으로 확인해보는 습관을 들이면 좋아요. "
     "맨 아래 눈금이 '0세', 맨 위 눈금이 '100세 이상'으로 보이면 정상이에요."
+)
+
+# =========================================================
+# 5단계. '아이가 많은 동네인가요, 어르신이 많은 동네인가요?' 자동 설명
+# =========================================================
+# 유소년 비율(young_rate)과 고령화율(aging_rate)을 비교해서,
+# 어느 쪽이 더 두드러지는지에 따라 다른 문장을 보여줘요.
+age_gap = aging_rate - young_rate  # 양수면 어르신 쪽이 더 많다는 뜻
+
+if age_gap >= 10:
+    summary_text = "🧓 **어르신이 많은, 고령화된 동네**예요."
+elif age_gap <= -5:
+    summary_text = "👶 **아이가 많은, 젊은 동네**예요."
+else:
+    summary_text = "⚖️ **아이와 어르신 비율이 비교적 균형 잡힌 동네**예요."
+
+st.info(
+    f"{summary_text}\n\n"
+    f"(유소년 비율(0~14세) {young_rate:.1f}% · 고령화율(65세 이상) {aging_rate:.1f}%)"
 )
 
 st.divider()
